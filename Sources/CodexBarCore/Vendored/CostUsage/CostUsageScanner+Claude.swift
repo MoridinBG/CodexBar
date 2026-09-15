@@ -18,6 +18,24 @@ extension CostUsageScanner {
         let model: String
     }
 
+    private enum ClaudeRowKey: Hashable, Comparable {
+        case request(messageId: String, requestId: String)
+        case session(sessionId: String, messageId: String)
+
+        static func < (lhs: Self, rhs: Self) -> Bool {
+            switch (lhs, rhs) {
+            case let (.request(lhsMessage, lhsRequest), .request(rhsMessage, rhsRequest)):
+                (lhsMessage, lhsRequest) < (rhsMessage, rhsRequest)
+            case let (.session(lhsSession, lhsMessage), .session(rhsSession, rhsMessage)):
+                (lhsSession, lhsMessage) < (rhsSession, rhsMessage)
+            case (.request, .session):
+                true
+            case (.session, .request):
+                false
+            }
+        }
+    }
+
     private struct ClaudeRepricedCost {
         var total: Double = 0
         var sampleCount: Int = 0
@@ -124,7 +142,7 @@ extension CostUsageScanner {
         }
 
         let pathRole = Self.claudePathRole(fileURL: fileURL)
-        var keyedRows: [String: ClaudeUsageRow] = [:]
+        var keyedRows: [ClaudeRowKey: ClaudeUsageRow] = [:]
         var unkeyedRows: [ClaudeUsageRow] = []
 
         let maxLineBytes = 512 * 1024
@@ -253,18 +271,21 @@ extension CostUsageScanner {
         fileURL.path.contains("/subagents/") ? .subagent : .parent
     }
 
-    private static func claudeCanonicalRowKey(_ row: ClaudeUsageRow) -> String? {
+    private static func claudeCanonicalRowKey(_ row: ClaudeUsageRow) -> ClaudeRowKey? {
         guard let messageId = row.messageId else { return nil }
         if let requestId = row.requestId {
-            return "\(messageId):\(requestId)"
+            return .request(messageId: messageId, requestId: requestId)
         }
         // Proxy responses can omit requestId while repeating usage for the same message.
-        guard let sessionId = row.sessionId else { return nil }
-        return "\(sessionId):\(messageId)"
+        guard !messageId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let sessionId = row.sessionId,
+              !sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return .session(sessionId: sessionId, messageId: messageId)
     }
 
     private static func mergeClaudeRows(existing: [ClaudeUsageRow], delta: [ClaudeUsageRow]) -> [ClaudeUsageRow] {
-        var keyedRows: [String: ClaudeUsageRow] = [:]
+        var keyedRows: [ClaudeRowKey: ClaudeUsageRow] = [:]
         var unkeyedRows: [ClaudeUsageRow] = []
 
         for row in existing {
@@ -303,7 +324,7 @@ extension CostUsageScanner {
         recordClaudeScanWork(.reconcile)
         #endif
         var rows: [ClaudeUsageRow] = []
-        var winners: [String: (path: String, row: ClaudeUsageRow)] = [:]
+        var winners: [ClaudeRowKey: (path: String, row: ClaudeUsageRow)] = [:]
 
         for path in cache.files.keys.sorted() {
             guard let fileRows = cache.files[path]?.claudeRows else { continue }
