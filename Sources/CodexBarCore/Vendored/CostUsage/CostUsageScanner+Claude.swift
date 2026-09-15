@@ -225,13 +225,10 @@ extension CostUsageScanner {
                             costNanos: tokens.costNanos,
                             costPriced: tokens.costPriced)
 
-                        // Streaming chunks share message.id + requestId inside a file.
-                        // Keep overwriting so the final cumulative chunk wins.
-                        if let messageId, let requestId {
-                            let key = "\(messageId):\(requestId)"
+                        // Keep the final cumulative chunk for each response.
+                        if let key = Self.claudeCanonicalRowKey(row) {
                             keyedRows[key] = row
                         } else {
-                            // Older logs omit IDs; treat each line as distinct to avoid dropping usage.
                             unkeyedRows.append(row)
                         }
                     }
@@ -257,10 +254,13 @@ extension CostUsageScanner {
     }
 
     private static func claudeCanonicalRowKey(_ row: ClaudeUsageRow) -> String? {
-        guard let messageId = row.messageId, let requestId = row.requestId else {
-            return nil
+        guard let messageId = row.messageId else { return nil }
+        if let requestId = row.requestId {
+            return "\(messageId):\(requestId)"
         }
-        return "\(messageId):\(requestId)"
+        // Proxy responses can omit requestId while repeating usage for the same message.
+        guard let sessionId = row.sessionId else { return nil }
+        return "\(sessionId):\(messageId)"
     }
 
     private static func mergeClaudeRows(existing: [ClaudeUsageRow], delta: [ClaudeUsageRow]) -> [ClaudeUsageRow] {
@@ -268,14 +268,14 @@ extension CostUsageScanner {
         var unkeyedRows: [ClaudeUsageRow] = []
 
         for row in existing {
-            if let key = Self.claudeInFileKey(row) {
+            if let key = Self.claudeCanonicalRowKey(row) {
                 keyedRows[key] = row
             } else {
                 unkeyedRows.append(row)
             }
         }
         for row in delta {
-            if let key = Self.claudeInFileKey(row) {
+            if let key = Self.claudeCanonicalRowKey(row) {
                 keyedRows[key] = row
             } else {
                 unkeyedRows.append(row)
@@ -283,11 +283,6 @@ extension CostUsageScanner {
         }
 
         return keyedRows.keys.sorted().compactMap { keyedRows[$0] } + unkeyedRows
-    }
-
-    private static func claudeInFileKey(_ row: ClaudeUsageRow) -> String? {
-        guard let messageId = row.messageId, let requestId = row.requestId else { return nil }
-        return "\(messageId):\(requestId)"
     }
 
     private static func claudeRowWins(
