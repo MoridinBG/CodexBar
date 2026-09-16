@@ -522,7 +522,7 @@ struct SpendDashboardModel: Equatable, Sendable {
                     Self.canRetainPartialCodexModelHistory(summary)
             }
             return Self.canRetainUnpricedModelHistory(summary) ||
-                summary.entries.allSatisfy(\.entry.hasOnlyIncompleteRequests)
+                (summary.incompleteRequestCount > 0 && summary.entries.allSatisfy(\.entry.hasOnlyIncompleteRequests))
         }
         // Unpriced named models can still list. Incomplete priced coverage stays hidden so a
         // partial list cannot look like a lower-bound total.
