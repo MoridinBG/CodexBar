@@ -5,6 +5,49 @@ import Testing
 @testable import CodexBarCLI
 
 struct ClaudeIncompleteUsagePropagationTests {
+    @Test(arguments: ["incomplete", "negative-cost", "negative-tokens", "unnamed"])
+    func `same day unpriced and incomplete models retain only valid attributed rows`(scenario: String) throws {
+        let pendingName = scenario == "unnamed" ? "" : "fixture-pending-model"
+        let entry = CostUsageDailyReport.Entry(
+            date: "2026-09-16",
+            inputTokens: 100,
+            outputTokens: 0,
+            totalTokens: 100,
+            costUSD: nil,
+            modelsUsed: ["fixture-unpriced-model", pendingName],
+            modelBreakdowns: [
+                .init(modelName: "fixture-unpriced-model", costUSD: nil, totalTokens: 100),
+                .init(
+                    modelName: pendingName,
+                    costUSD: scenario == "negative-cost" ? -1 : nil,
+                    totalTokens: scenario == "negative-tokens" ? -1 : nil,
+                    incompleteRequestCount: 1),
+            ])
+        let model = Self.dashboard(snapshot: Self.snapshot(entries: [entry]))
+        let group = try #require(model.groups.first)
+        let exported = try #require(SpendDashboardExportPayload.make(model: model, hiddenSourceIDs: []).groups.first)
+        #expect(group.modelHistoryCompleteness == .incomplete)
+        #expect(group.incompleteRequestCount == 1)
+        if scenario != "incomplete" {
+            #expect(group.models.isEmpty)
+            #expect(exported.models.isEmpty)
+            return
+        }
+        #expect(group.models.count == 2)
+        let unpriced = try #require(group.models.first { $0.modelName == "fixture-unpriced-model" })
+        let pending = try #require(group.models.first { $0.modelName == pendingName })
+        #expect(unpriced.totalTokens == 100)
+        #expect(unpriced.totalCost == nil)
+        #expect(pending.totalTokens == nil)
+        #expect(pending.totalCost == nil)
+        #expect(pending.incompleteRequestCount == 1)
+        #expect(group.hasPartialTokens)
+        #expect(ShareStatsBuilder.make(model: model)?.topModels.isEmpty == true)
+        #expect(exported.models.count == 2)
+        #expect(exported.models.first { $0.modelName == "fixture-unpriced-model" }?.totalTokens == 100)
+        #expect(exported.models.first { $0.modelName == pendingName }?.incompleteRequestCount == 1)
+    }
+
     @Test
     func `CLI retains known subtotals and exposes exclusions at every JSON level`() throws {
         let snapshot = Self.snapshot()

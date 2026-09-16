@@ -164,6 +164,11 @@ extension SpendDashboardModel {
             if Self.validCost(breakdown.costUSD) != nil {
                 continue
             }
+            if (breakdown.incompleteRequestCount ?? 0) > 0,
+               breakdown.costUSD == nil, breakdown.totalTokens == nil
+            {
+                continue
+            }
             guard breakdown.costUSD == nil,
                   Self.nonnegative(breakdown.totalTokens) != nil
             else {
